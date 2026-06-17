@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "gitguard"
+version = "0.1.0"
+description = "A secret-scanning CLI for folders, ZIPs, and GitHub repositories."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+authors = [{ name = "GitGuard" }]
+keywords = ["security", "secrets", "scanner", "cli", "git"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Developers",
+    "Topic :: Security",
+    "Programming Language :: Python :: 3",
+]
+dependencies = [
+    "typer>=0.9",
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.scripts]
+gitguard = "gitguard.cli:run"
+
+[project.urls]
+Homepage = "https://github.com/example/gitguard"
+
+[tool.setuptools.packages.find]
+include = ["gitguard*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
