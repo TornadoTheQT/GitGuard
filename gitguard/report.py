@@ -38,6 +38,110 @@ def to_csv(report: Report) -> str:
     return buf.getvalue()
 
 
+def to_ai(report: Report) -> str:
+    """Render a Markdown remediation brief for an AI coding agent.
+
+    The format is deterministic and self-describing: a task preamble, a summary,
+    then findings grouped by file (most severe first) with the issue, location,
+    and concrete fix steps so an agent like Claude Code can act on it directly.
+    """
+
+    from .fixes import fixes_for_finding
+
+    sev_counts = report.severity_counts()
+    cov = report.category_counts()
+    secrets = report.secret_findings()
+    vulns = [f for f in report.findings if f.category == "vulnerability"]
+
+    lines: list[str] = []
+    lines.append("# GitGuard Security Remediation Brief")
+    lines.append("")
+    lines.append(
+        "You are a coding agent. Fix every security issue listed below in this "
+        "repository. Work through findings from most to least severe."
+    )
+    lines.append("")
+    lines.append("## How to fix")
+    lines.append("")
+    lines.append(
+        "- **Hardcoded secrets / credentials:** remove the literal value from "
+        "the file, load it from an environment variable instead (e.g. "
+        "`process.env.NAME` / `os.environ[\"NAME\"]`), add the source file or "
+        "`.env` to `.gitignore`, and add the key to `.env.example`. Treat any "
+        "real secret as compromised and note that it must be rotated."
+    )
+    lines.append(
+        "- **Code vulnerabilities:** apply the suggested fix for each pattern "
+        "(parameterized queries, output encoding, safe APIs, input validation)."
+    )
+    lines.append(
+        "- Do not commit real secrets. Do not weaken unrelated code. Make the "
+        "smallest change that resolves each finding."
+    )
+    lines.append("")
+    lines.append("## Summary")
+    lines.append("")
+    lines.append(f"- Risk score: **{report.risk_score}/100**")
+    lines.append(
+        f"- Findings: **{len(report.findings)}** "
+        f"(secrets: {len(secrets)}, vulnerabilities: {len(vulns)})"
+    )
+    sev_str = ", ".join(
+        f"{name} {sev_counts[name]}"
+        for name in ("CRITICAL", "HIGH", "MEDIUM", "LOW", "INFO")
+        if sev_counts[name]
+    )
+    lines.append(f"- By severity: {sev_str or 'none'}")
+    lines.append(
+        "- Coverage — provider: {provider}, generic: {generic}, "
+        "context: {context}, entropy: {entropy}, "
+        "vulnerability: {vulnerability}".format(**cov)
+    )
+    lines.append("")
+    lines.append("## Findings")
+    lines.append("")
+
+    # Group by file, files ordered by their worst finding, findings by severity.
+    by_file: dict[str, list] = {}
+    for f in report.findings:
+        by_file.setdefault(f.path, []).append(f)
+
+    def file_rank(path: str) -> int:
+        return -max(int(x.severity) for x in by_file[path])
+
+    for path in sorted(by_file, key=lambda p: (file_rank(p), p)):
+        lines.append(f"### `{path}`")
+        lines.append("")
+        items = sorted(
+            by_file[path], key=lambda x: (-int(x.severity), x.line, x.rule_id)
+        )
+        for f in items:
+            kind = "vulnerability" if f.category == "vulnerability" else "secret"
+            loc = f"line {f.line}, col {f.column}"
+            if f.source.value == "history":
+                loc += f" (git history{', ' + f.commit[:8] if f.commit else ''})"
+            lines.append(
+                f"- **[{f.severity.name}] {f.rule_name}** "
+                f"(`{f.rule_id}`, {kind}) — {loc}"
+            )
+            lines.append(f"  - Match: `{f.match_preview}`")
+            if f.risk:
+                lines.append(f"  - Why it matters: {f.risk}")
+            # Vulnerabilities carry their own recommendation; secrets get the
+            # richer per-rule rotation/revocation steps.
+            steps = [f.recommendation] if kind == "vulnerability" else fixes_for_finding(f)
+            for step in steps:
+                if step:
+                    lines.append(f"  - Fix: {step}")
+        lines.append("")
+
+    if not report.findings:
+        lines.append("_No findings — nothing to fix._")
+        lines.append("")
+
+    return "\n".join(lines)
+
+
 def _risk_color(score: int) -> str:
     if score >= 75:
         return "red"

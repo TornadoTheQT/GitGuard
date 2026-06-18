@@ -16,8 +16,8 @@ from rich.progress import Progress, SpinnerColumn, TextColumn
 
 from . import __version__
 from .models import Report, Severity, Source
-from .report import render_report, to_csv, to_json, write_output
-from .scanner import ScanConfig, finalize_report, scan_directory
+from .report import render_report, to_ai, to_csv, to_json, write_output
+from .scanner import ScanConfig, finalize_report, scan_directory, scan_single_file
 from .utils import (
     DEFAULT_IGNORED_DIRS,
     GitGuardError,
@@ -82,11 +82,18 @@ def main(
 
 @app.command()
 def scan(
-    target: str = typer.Argument(..., help="Folder path, .zip file, or GitHub URL."),
+    target: str = typer.Argument(..., help="File, folder, .zip file, or GitHub URL."),
     history: bool = typer.Option(False, "--history", help="Scan git commit history."),
-    json_out: bool = typer.Option(False, "--json", help="Output JSON."),
+    json_out: bool = typer.Option(False, "--json", help="Output JSON (default for --out)."),
     csv_out: bool = typer.Option(False, "--csv", help="Output CSV."),
-    out: Optional[Path] = typer.Option(None, "--out", help="Save report to a file."),
+    ai: bool = typer.Option(
+        False, "--ai",
+        help="Output a Markdown remediation brief for an AI coding agent.",
+    ),
+    out: Optional[Path] = typer.Option(
+        None, "--out",
+        help="Save report to a file (JSON unless --csv/--ai is given).",
+    ),
     no_entropy: bool = typer.Option(False, "--no-entropy", help="Disable entropy scanning."),
     max_file_size: float = typer.Option(
         5.0, "--max-file-size", help="Skip files larger than this many MB."
@@ -154,7 +161,7 @@ def scan(
             shutil.rmtree(d, ignore_errors=True)
 
     try:
-        _emit(report, console, json_out, csv_out, out, quiet, debug)
+        _emit(report, console, json_out, csv_out, ai, out, quiet, debug)
     except GitGuardError as exc:
         _print_error(exc, debug)
         raise typer.Exit(2)
@@ -194,7 +201,7 @@ def _run_scan(
                 f"Target does not exist: {target}",
                 fixes=[
                     "Check the path for typos",
-                    "Pass a folder, a .zip file, or a GitHub URL",
+                    "Pass a file, a folder, a .zip file, or a GitHub URL",
                 ],
             )
         if path.is_file() and path.suffix.lower() == ".zip":
@@ -204,13 +211,23 @@ def _run_scan(
             with _spinner("Extracting archive", quiet):
                 archive.safe_extract_zip(path, extract_dir)
             root = extract_dir
+        elif path.is_file():
+            # Single-file scan (e.g. "main.js"): no directory walk needed.
+            if history and not quiet:
+                err_console.print(
+                    "[yellow]--history is ignored when scanning a single file.[/yellow]"
+                )
+            with _spinner("Scanning file", quiet):
+                report = scan_single_file(path, config, target_label=target)
+            report.tool_version = __version__
+            return report
         elif path.is_dir():
             target_type = "directory"
             root = path
         else:
             raise GitGuardError(
                 f"Don't know how to scan: {target}",
-                fixes=["Pass a folder, a .zip file, or a GitHub URL"],
+                fixes=["Pass a file, a folder, a .zip file, or a GitHub URL"],
             )
 
     report = _scan_with_progress(root, config, target, target_type, quiet)
@@ -286,45 +303,52 @@ class _NullCtx:
         return False
 
 
+# Output formats: selector flag -> (renderer, file extension, label).
+_FORMATS = {
+    "json": (to_json, "json", "JSON"),
+    "csv": (to_csv, "csv", "CSV"),
+    "ai": (to_ai, "md", "AI remediation brief"),
+}
+
+
 def _emit(
     report: Report,
     console: Console,
     json_out: bool,
     csv_out: bool,
+    ai: bool,
     out: Optional[Path],
     quiet: bool,
     debug: bool,
 ) -> None:
-    if json_out and csv_out:
+    selected = [name for name, on in
+                (("json", json_out), ("csv", csv_out), ("ai", ai)) if on]
+    if len(selected) > 1:
         _print_error(
-            GitGuardError("Choose only one of --json or --csv."), debug
+            GitGuardError("Choose only one of --json, --csv, or --ai."), debug
         )
         raise typer.Exit(2)
 
-    if json_out:
-        content = to_json(report)
-        if out:
-            dest = _resolve_out(out, "json")
-            write_output(content, dest)
-            console.print(f"[green]JSON report written to {dest}[/green]")
-        else:
-            console.print_json(content)
-        return
-    if csv_out:
-        content = to_csv(report)
-        if out:
-            dest = _resolve_out(out, "csv")
-            write_output(content, dest)
-            console.print(f"[green]CSV report written to {dest}[/green]")
-        else:
-            console.print(content)
+    fmt = selected[0] if selected else None
+    # --out defaults to JSON, so an explicit --json flag is not required.
+    if fmt is None and out is not None:
+        fmt = "json"
+
+    # No format and no output file -> rich terminal report.
+    if fmt is None:
+        render_report(report, console, quiet=quiet)
         return
 
-    render_report(report, console, quiet=quiet)
+    renderer, ext, label = _FORMATS[fmt]
+    content = renderer(report)
     if out:
-        dest = _resolve_out(out, "json")
-        write_output(to_json(report), dest)
-        console.print(f"[dim]Full JSON report also written to {dest}[/dim]")
+        dest = _resolve_out(out, ext)
+        write_output(content, dest)
+        console.print(f"[green]{label} written to {dest}[/green]")
+    elif fmt == "json":
+        console.print_json(content)
+    else:
+        console.print(content, markup=False, highlight=False)
 
 
 def _resolve_out(out: Path, ext: str) -> Path:
@@ -555,7 +579,9 @@ def _validate_target(target: str) -> tuple[bool, str]:
         return True, "directory"
     if path.suffix.lower() == ".zip":
         return True, "zip archive"
-    return False, "unsupported file type (expected folder, .zip, or GitHub URL)"
+    if path.is_file():
+        return True, "file"
+    return False, "unsupported target (expected file, folder, .zip, or GitHub URL)"
 
 
 def run() -> None:  # console-script entry point

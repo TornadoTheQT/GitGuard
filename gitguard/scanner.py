@@ -498,6 +498,34 @@ def finalize_report(report: Report, findings: list[Finding]) -> Report:
     return report
 
 
+def scan_single_file(
+    path: Path,
+    config: ScanConfig,
+    *,
+    target_label: str,
+    target_type: str = "file",
+) -> Report:
+    """Scan exactly one file and return a Report (no directory walk)."""
+
+    start = time.monotonic()
+    stats = ScanStats()
+    findings: list[Finding] = []
+
+    if is_probably_binary(path):
+        stats.files_skipped = 1
+    else:
+        findings = scan_file(path, path.name, config)
+        try:
+            stats.bytes_scanned = path.stat().st_size
+        except OSError:
+            pass
+        stats.files_scanned = 1
+
+    stats.duration_seconds = round(time.monotonic() - start, 3)
+    report = Report(target=target_label, target_type=target_type, stats=stats)
+    return finalize_report(report, findings)
+
+
 def scan_directory(
     root: Path,
     config: ScanConfig,

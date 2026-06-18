@@ -56,15 +56,16 @@ remote GitHub URLs.
 gitguard scan <target> [options]
 ```
 
-`<target>` may be a **local folder**, a **`.zip` file**, or a **GitHub URL**
-(`https://github.com/owner/repo`).
+`<target>` may be a **single file** (e.g. `main.js`), a **local folder**, a
+**`.zip` file**, or a **GitHub URL** (`https://github.com/owner/repo`).
 
 | Option | Description |
 | --- | --- |
 | `--history` | Also scan git commit history (added lines across commits). |
-| `--json` | Emit a JSON report. |
-| `--csv` | Emit a CSV report. |
-| `--out <path>` | Write the report to a file. |
+| `--csv` | Emit a CSV report (instead of the default JSON). |
+| `--ai` | Emit a Markdown remediation brief for an AI coding agent (e.g. Claude Code). |
+| `--json` | Emit a JSON report. JSON is already the default for `--out`, so this is optional. |
+| `--out <path>` | Write the report to a file (**JSON by default**; `.csv`/`.md` with `--csv`/`--ai`). A directory writes `gitguard-report.<ext>` inside it. |
 | `--no-entropy` | Disable Shannon-entropy detection. |
 | `--max-file-size <mb>` | Skip files larger than this (default 5 MB). |
 | `--include-hidden` | Include hidden files/folders (e.g. `.env`). |
@@ -75,16 +76,34 @@ gitguard scan <target> [options]
 | `--show-secrets` | Reveal full secrets (prompts for confirmation; dangerous). |
 | `--debug` | Show tracebacks instead of friendly errors. |
 
+> **Output formats:** the terminal report is the default when printing to the
+> screen. When you pass `--out`, the file is **JSON unless** you add `--csv` or
+> `--ai` — you no longer need `--json`. Only one of `--json`/`--csv`/`--ai` may
+> be used at a time.
+
 > **Note:** `.env` and other dotfiles are *hidden* and skipped by default. Pass
 > `--include-hidden` to scan them.
 
 Examples:
 
 ```bash
+gitguard scan main.js                            # scan a single file
 gitguard scan ./myproject --include-hidden
-gitguard scan ./release.zip --json --out report.json
+gitguard scan ./release.zip --out report.json    # JSON, no --json needed
+gitguard scan . --vulns --ai --out FIX.md        # AI-agent remediation brief
 gitguard scan https://github.com/owner/repo --history
-gitguard scan . --history --fail-on HIGH        # CI gate
+gitguard scan . --history --fail-on HIGH         # CI gate
+```
+
+### Fixing findings with an AI agent (`--ai`)
+
+`--ai` emits a self-contained Markdown brief — a task preamble, a summary, and
+every finding grouped by file with its location, the reason it matters, and
+concrete fix steps. Hand it to an agent like Claude Code to remediate:
+
+```bash
+gitguard scan . --vulns --ai --out SECURITY_FIXES.md
+# then, in your agent: "Work through SECURITY_FIXES.md and fix each finding."
 ```
 
 ### `rules` — list detection rules

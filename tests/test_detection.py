@@ -9,7 +9,10 @@ from gitguard.assignments import extract_assignments, is_sensitive_name
 from gitguard.models import Severity
 from gitguard.scanner import ScanConfig, scan_text
 
-FIXTURE = Path(__file__).parent / "fixtures" / "vulnerable-demo.js"
+from .demo_source import build_demo_source
+
+# Built from fragments at runtime (no literal secret stored on disk).
+DEMO = build_demo_source()
 
 
 @pytest.fixture
@@ -55,7 +58,7 @@ def test_is_sensitive_name_avoids_false_positives():
     ("MAIL = 'smtp://u:p@smtp.example.com:587'", "smtp-url"),
     ("FILES = 'sftp://u:p@host:22'", "ftp-url"),
     ("GL = 'glpat-aaaaaaaaaaaaaaaaaaaa'", "gitlab-token"),
-    ("MG = 'key-REDACTED'", "mailgun-key"),
+    ("MG = 'key-" + "a" * 32 + "'", "mailgun-key"),
     ("FB = 'https://my-app.firebaseio.com'", "firebase-url"),
 ])
 def test_additional_rules(cfg, text, rule):
@@ -182,20 +185,20 @@ def test_vuln_patterns(text, rule):
 
 def test_fixture_minimum_secret_findings():
     cfg = ScanConfig(use_entropy=True)
-    findings = scan_text(FIXTURE.read_text(), "vulnerable-demo.js", cfg)
+    findings = scan_text(DEMO, "vulnerable-demo.js", cfg)
     secrets = [f for f in findings if f.category != "vulnerability"]
     assert len(secrets) >= 20, f"expected >= 20 secrets, got {len(secrets)}"
 
 
 def test_fixture_with_vulns_in_expected_range():
     cfg = ScanConfig(use_entropy=True, scan_vulns=True)
-    findings = scan_text(FIXTURE.read_text(), "vulnerable-demo.js", cfg)
+    findings = scan_text(DEMO, "vulnerable-demo.js", cfg)
     assert 35 <= len(findings) <= 60, f"expected 35-50+, got {len(findings)}"
 
 
 def test_fixture_covers_required_rule_types():
     cfg = ScanConfig(use_entropy=True)
-    found = ids(scan_text(FIXTURE.read_text(), "vulnerable-demo.js", cfg))
+    found = ids(scan_text(DEMO, "vulnerable-demo.js", cfg))
     required = {
         "aws-access-key", "github-token", "stripe-live-secret", "openai-key",
         "discord-bot-token", "slack-token", "db-url", "redis-url",
@@ -214,7 +217,7 @@ def test_coverage_buckets_populated():
     from gitguard.scanner import finalize_report
     from gitguard.models import Report
 
-    findings = scan_text(FIXTURE.read_text(), "vulnerable-demo.js", cfg)
+    findings = scan_text(DEMO, "vulnerable-demo.js", cfg)
     report = finalize_report(Report(target="t", target_type="directory"), findings)
     cov = report.category_counts()
     for bucket in ("provider", "generic", "context", "entropy"):
