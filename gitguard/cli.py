@@ -112,6 +112,36 @@ def scan(
         help="Exit nonzero if a finding at this severity or higher exists "
         "(INFO/LOW/MEDIUM/HIGH/CRITICAL).",
     ),
+    fix: bool = typer.Option(
+        False,
+        "--fix",
+        help="Use GitGuard's fix agent to propose reviewed fixes.",
+    ),
+    test_cmd: Optional[list[str]] = typer.Option(
+        None,
+        "--test-cmd",
+        help="Verification command to run from the fixed target root. Repeatable.",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Fix agent model override, e.g. provider/model.",
+    ),
+    fix_timeout: int = typer.Option(
+        900,
+        "--fix-timeout",
+        help="Seconds to wait for the fix agent.",
+    ),
+    patch_out: Optional[Path] = typer.Option(
+        None,
+        "--patch-out",
+        help="Save the proposed fix-agent diff to this patch file.",
+    ),
+    fix_max_findings: int = typer.Option(
+        25,
+        "--fix-max-findings",
+        help="Maximum findings to hand to the fix agent; use 0 to disable.",
+    ),
     show_secrets: bool = typer.Option(
         False, "--show-secrets", help="Show full secrets (DANGEROUS)."
     ),
@@ -165,6 +195,24 @@ def scan(
     except GitGuardError as exc:
         _print_error(exc, debug)
         raise typer.Exit(2)
+
+    if fix:
+        try:
+            report = _run_fix_flow(
+                target=target,
+                report=report,
+                config=config,
+                history=history,
+                quiet=quiet,
+                model=model,
+                fix_timeout=fix_timeout,
+                patch_out=patch_out,
+                fix_max_findings=fix_max_findings,
+                test_cmds=test_cmd or [],
+            )
+        except GitGuardError as exc:
+            _print_error(exc, debug)
+            raise typer.Exit(2)
 
     if fail_threshold is not None:
         worst = max((f.severity for f in report.findings), default=Severity.INFO)
@@ -362,6 +410,195 @@ def _resolve_out(out: Path, ext: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# scan --fix
+# ---------------------------------------------------------------------------
+
+def _run_fix_flow(
+    *,
+    target: str,
+    report: Report,
+    config: ScanConfig,
+    history: bool,
+    quiet: bool,
+    model: Optional[str],
+    fix_timeout: int,
+    patch_out: Optional[Path],
+    fix_max_findings: int,
+    test_cmds: list[str],
+) -> Report:
+    """Run agentic remediation after an initial scan."""
+
+    if not report.findings:
+        if not quiet:
+            console.print("[green]No findings to fix; the fix agent stayed idle.[/green]")
+        return report
+
+    if fix_max_findings > 0 and len(report.findings) > fix_max_findings:
+        raise GitGuardError(
+            "Too many findings for one fix-agent pass.",
+            reason=(
+                f"Found {len(report.findings)} findings; the current "
+                f"`--fix-max-findings` limit is {fix_max_findings}."
+            ),
+            fixes=[
+                "Run `gitguard scan <specific-file-or-folder> --fix` on a narrower target",
+                "Avoid running `--fix` on test fixtures or scanner rule definitions",
+                "Increase `--fix-max-findings` only when the findings are real and related",
+                "Use `--fix-max-findings 0` to disable this guard",
+            ],
+        )
+
+    from rich.rule import Rule
+
+    from .remediation import (
+        apply_changes_to_local_target,
+        build_remediation_prompt,
+        generate_patch,
+        prepare_remediation_target,
+        require_fix_agent_available,
+        run_fix_agent,
+        run_test_commands,
+        write_fixed_zip,
+        write_patch,
+    )
+
+    require_fix_agent_available()
+    prepared = prepare_remediation_target(target)
+    try:
+        prompt = build_remediation_prompt(report, prepared)
+        with _spinner("Spinning up the fix agent", quiet):
+            run_fix_agent(
+                prepared,
+                prompt,
+                model=model,
+                timeout=fix_timeout,
+            )
+
+        patch = generate_patch(prepared.baseline_root, prepared.work_root)
+        if not patch.has_changes:
+            console.print("[yellow]The fix agent finished without file changes.[/yellow]")
+            return report
+
+        if patch_out is not None:
+            written = write_patch(patch.diff, patch_out)
+            console.print(f"[green]Patch written to {written}[/green]")
+
+        console.print()
+        console.print(Rule("[bold cyan]Fix agent proposed diff[/bold cyan]", style="cyan"))
+        console.print(patch.diff, markup=False, highlight=False)
+
+        if not typer.confirm(_confirmation_prompt(prepared.apply_mode), default=False):
+            console.print("[yellow]No changes were applied.[/yellow]")
+            return report
+
+        verification_target: str
+        verification_history = False
+        verification_cwd: Path
+
+        if prepared.apply_mode == "local":
+            if prepared.apply_root is None:
+                raise GitGuardError("Internal error: local remediation has no apply root.")
+            apply_changes_to_local_target(
+                patch.changes,
+                work_root=prepared.work_root,
+                apply_root=prepared.apply_root,
+            )
+            verification_target = prepared.original
+            verification_history = history
+            verification_cwd = prepared.apply_root
+            console.print("[green]Changes applied to the local target.[/green]")
+        elif prepared.apply_mode == "zip":
+            if prepared.fixed_zip_path is None:
+                raise GitGuardError("Internal error: ZIP remediation has no output path.")
+            fixed_zip = write_fixed_zip(prepared.work_root, prepared.fixed_zip_path)
+            verification_target = str(fixed_zip)
+            verification_cwd = prepared.work_root
+            console.print(f"[green]Fixed ZIP artifact written to {fixed_zip}[/green]")
+        else:
+            patch_path = patch_out or prepared.default_patch_path
+            if patch_path is None:
+                patch_path = Path.cwd() / "gitguard-agent-fix.patch"
+            written = write_patch(patch.diff, patch_path)
+            verification_target = str(prepared.work_root)
+            verification_cwd = prepared.work_root
+            console.print(f"[green]Patch artifact written to {written}[/green]")
+
+        final_report = _rescan_after_fix(
+            verification_target,
+            config,
+            history=verification_history,
+            quiet=quiet,
+        )
+        if not quiet:
+            console.print()
+            console.print(Rule("[bold cyan]Post-fix GitGuard scan[/bold cyan]", style="cyan"))
+            render_report(final_report, console, quiet=quiet)
+
+        if test_cmds:
+            results = run_test_commands(test_cmds, verification_cwd)
+            _render_test_results(results)
+            if any(result.returncode != 0 for result in results):
+                raise typer.Exit(1)
+
+        return final_report
+    finally:
+        prepared.cleanup()
+
+
+def _confirmation_prompt(apply_mode: str) -> str:
+    if apply_mode == "local":
+        return "Apply these changes to the original local target?"
+    if apply_mode == "zip":
+        return "Write a fixed ZIP artifact with these changes?"
+    return "Write this patch artifact?"
+
+
+def _rescan_after_fix(
+    target: str,
+    config: ScanConfig,
+    *,
+    history: bool,
+    quiet: bool,
+) -> Report:
+    tmp_dirs: list[Path] = []
+    try:
+        return _run_scan(target, config, history=history, quiet=quiet, tmp_dirs=tmp_dirs)
+    finally:
+        for d in tmp_dirs:
+            shutil.rmtree(d, ignore_errors=True)
+
+
+def _render_test_results(results) -> None:
+    from rich import box
+    from rich.rule import Rule
+
+    console.print()
+    console.print(Rule("[bold cyan]Verification commands[/bold cyan]", style="cyan"))
+    for result in results:
+        ok = result.returncode == 0
+        style = "green" if ok else "red"
+        body_lines = [
+            f"$ {result.command}",
+            f"cwd: {result.cwd}",
+            f"exit code: {result.returncode}",
+        ]
+        if result.stdout.strip():
+            body_lines += ["", result.stdout.rstrip()]
+        if result.stderr.strip():
+            body_lines += ["", result.stderr.rstrip()]
+        console.print(
+            Panel(
+                "\n".join(body_lines),
+                title="[bold green]PASS[/bold green]" if ok else "[bold red]FAIL[/bold red]",
+                title_align="left",
+                border_style=style,
+                box=box.ROUNDED,
+                padding=(1, 2),
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
 # rules
 # ---------------------------------------------------------------------------
 
@@ -548,6 +785,20 @@ def doctor(
     git_ok = git_history.git_available()
     row("git installed", git_ok, shutil.which("git") or "not found on PATH")
 
+    from .remediation import check_fix_agent_environment
+
+    agent_status = check_fix_agent_environment()
+    row(
+        "Node.js for --fix",
+        agent_status.node.ok,
+        agent_status.node.detail,
+    )
+    row(
+        "Fix agent CLI for --fix",
+        agent_status.agent.ok,
+        agent_status.agent.detail,
+    )
+
     cwd = Path.cwd()
     row("Working directory", cwd.exists(), str(cwd))
 
@@ -566,6 +817,11 @@ def doctor(
         console.print(
             "[yellow]Note:[/yellow] without git, --history and GitHub cloning "
             "are unavailable; local folders and ZIPs still work."
+        )
+    if not agent_status.ready:
+        console.print(
+            "[yellow]Note:[/yellow] `gitguard scan --fix` requires Node.js "
+            "v22.19.0+ and a configured external fix-agent runtime."
         )
 
 

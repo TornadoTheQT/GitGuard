@@ -124,6 +124,22 @@ def test_weak_credentials_are_high(cfg, value):
     assert weak[0].severity == Severity.HIGH
 
 
+def test_code_reference_assignments_are_not_hardcoded_credentials(cfg):
+    text = "\n".join([
+        "const DB_PASSWORD = process.env.DB_PASSWORD;",
+        "const db = {",
+        "  password: DB_PASSWORD,",
+        "};",
+    ])
+    findings = scan_text(text, "app.js", cfg)
+    assert "generic-secret-assignment" not in ids(findings)
+
+
+def test_unquoted_config_credentials_still_report(cfg):
+    findings = scan_text("DB_PASSWORD=admin123", ".env", cfg)
+    assert "weak-credential" in ids(findings)
+
+
 # --- part 7: duplicate suppression / correlation -----------------------------
 
 def test_no_duplicate_for_database_url(cfg):
@@ -179,6 +195,17 @@ def test_vulns_only_with_flag():
 def test_vuln_patterns(text, rule):
     findings = scan_text(text, "h.js", ScanConfig(scan_vulns=True))
     assert rule in ids(findings)
+
+
+def test_vuln_scan_ignores_safe_imports_and_comments():
+    text = "\n".join([
+        'const { execFile } = require("child_process");',
+        "// Weak crypto fixed: use SHA-256 instead of MD5",
+        'return crypto.createHash("sha256").update(pw).digest("hex");',
+    ])
+    findings = scan_text(text, "h.js", ScanConfig(scan_vulns=True))
+    assert "command-injection" not in ids(findings)
+    assert "weak-crypto" not in ids(findings)
 
 
 # --- part 10: expected coverage on the demo fixture --------------------------

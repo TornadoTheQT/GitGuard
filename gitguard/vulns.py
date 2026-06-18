@@ -65,7 +65,8 @@ VULN_RULES: list[VulnRule] = [
         id="command-injection",
         name="Command Injection",
         pattern=_c(
-            r"(?i)(?:child_process|\bexec\s*\(|execSync\s*\(|\bspawn\s*\(|"
+            r"(?i)(?:\bexec\s*\(|\bexecSync\s*\(|\bspawn\s*\(|"
+            r"child_process\.(?:exec|execSync|spawn)\s*\(|"
             r"os\.system\s*\(|os\.popen\s*\(|subprocess\.[A-Za-z_]+\([^)]*shell\s*=\s*True)"
         ),
         severity=Severity.CRITICAL,
@@ -110,7 +111,12 @@ VULN_RULES: list[VulnRule] = [
     VulnRule(
         id="weak-crypto",
         name="Weak Cryptography",
-        pattern=_c(r"(?i)(?:createHash\s*\(\s*['\"](?:md5|sha1)|\bMD5\b|\bSHA1\b|\bDES\b|\bRC4\b|hashlib\.(?:md5|sha1)\s*\()"),
+        pattern=_c(
+            r"(?i)(?:createHash\s*\(\s*['\"](?:md5|sha1)['\"]|"
+            r"hashlib\.(?:md5|sha1)\s*\(|"
+            r"createCipher(?:iv)?\s*\(\s*['\"](?:des|rc4|des-ede|bf)|"
+            r"\b(?:MD5|SHA1|DES|RC4)\s*\()"
+        ),
         severity=Severity.MEDIUM,
         description="Use of a broken or weak hashing/encryption algorithm.",
         recommendation="Use SHA-256+/bcrypt/argon2 and AES-GCM as appropriate.",
@@ -210,8 +216,11 @@ def scan_text_for_vulns(
     for idx, line in enumerate(text.splitlines(), start=1):
         if len(line) > 20_000:
             line = line[:20_000]
+        scan_line = _strip_line_comment(line)
+        if not scan_line.strip():
+            continue
         for rule in VULN_RULES:
-            for m in rule.pattern.finditer(line):
+            for m in rule.pattern.finditer(scan_line):
                 snippet = m.group(0).strip()
                 if len(snippet) > 80:
                     snippet = snippet[:77] + "…"
@@ -237,3 +246,28 @@ def scan_text_for_vulns(
                 )
                 break  # one finding per rule per line keeps output readable
     return findings
+
+
+def _strip_line_comment(line: str) -> str:
+    """Remove // and # comments without cutting through quoted strings."""
+
+    quote: str | None = None
+    escaped = False
+    for idx, char in enumerate(line):
+        if escaped:
+            escaped = False
+            continue
+        if quote:
+            if char == "\\":
+                escaped = True
+            elif char == quote:
+                quote = None
+            continue
+        if char in {"'", '"', "`"}:
+            quote = char
+            continue
+        if char == "#" or (
+            char == "/" and idx + 1 < len(line) and line[idx + 1] == "/"
+        ):
+            return line[:idx]
+    return line

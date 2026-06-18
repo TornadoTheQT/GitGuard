@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +54,36 @@ _SENSITIVE_FILE_HINTS = (
     "application.properties", "appsettings",
 )
 
+_CODE_FILE_EXTS = {
+    ".c",
+    ".cc",
+    ".cjs",
+    ".cpp",
+    ".cs",
+    ".go",
+    ".java",
+    ".js",
+    ".jsx",
+    ".kt",
+    ".mjs",
+    ".php",
+    ".py",
+    ".rb",
+    ".rs",
+    ".swift",
+    ".ts",
+    ".tsx",
+}
+
+_CODE_REFERENCE_RE = re.compile(
+    r"""^[A-Za-z_$][\w$]*(?:
+        \.[A-Za-z_$][\w$]*
+        |\[['"][^'"]+['"]\]
+        |\[[A-Za-z_$][\w$]*\]
+    )*$""",
+    re.VERBOSE,
+)
+
 ProgressCallback = Callable[[str], None]
 
 
@@ -92,6 +123,14 @@ def _context_window(line: str, start: int, end: int) -> str:
 def _is_sensitive_file(path_label: str) -> bool:
     low = path_label.lower()
     return any(hint in low for hint in _SENSITIVE_FILE_HINTS)
+
+
+def _is_code_file(path_label: str) -> bool:
+    return Path(path_label).suffix.lower() in _CODE_FILE_EXTS
+
+
+def _looks_like_code_reference(value: str) -> bool:
+    return bool(_CODE_REFERENCE_RE.fullmatch(value))
 
 
 def _value_is_placeholder(secret: str) -> bool:
@@ -324,11 +363,14 @@ def _context_candidates(
     """Flag hard-coded credentials by variable name (parts 1, 4, 6)."""
 
     out: list[_Candidate] = []
+    code_file = _is_code_file(path_label)
     for a in extract_assignments(line):
         if not is_sensitive_name(a.name):
             continue
-        value = a.value.strip()
+        value = a.value.strip().rstrip(",;").strip()
         if not value:
+            continue
+        if not a.quoted and code_file and _looks_like_code_reference(value):
             continue
         low = value.lower()
         context = _context_window(line, a.name_col, a.value_end)

@@ -4,7 +4,9 @@ A production-quality **secret-scanning CLI**. GitGuard scans local folders,
 ZIP archives, and GitHub repositories (including git history) for exposed API
 keys, tokens, passwords, and private keys. It scores severity, shows exact
 file/line locations, and generates deterministic remediation advice — all
-offline. **It never sends your secrets anywhere.**
+offline. **Plain scans never send your secrets anywhere.** If you opt into
+`scan --fix`, GitGuard creates a temporary copy and spins up a configured fix
+agent to edit it.
 
 ```
 GitGuard Scan Report
@@ -73,6 +75,12 @@ gitguard scan <target> [options]
 | `--vulns` | Also scan for code vulnerabilities (injection, eval, weak crypto…). |
 | `--quiet` | Only show the findings table. |
 | `--fail-on <severity>` | Exit non-zero if a finding ≥ this severity exists (CI). |
+| `--fix` | Ask GitGuard's fix agent to propose reviewed fixes in a temporary workspace. |
+| `--test-cmd <cmd>` | Verification command to run from the fixed target root after accepted `--fix` changes. Repeatable. |
+| `--model <provider/model>` | Optional fix-agent model override for `--fix`. |
+| `--fix-timeout <seconds>` | Seconds to wait for the fix agent (default 900). |
+| `--patch-out <path>` | Save the proposed fix-agent diff to a patch file. |
+| `--fix-max-findings <n>` | Maximum findings for one fix-agent pass (default 25; use 0 to disable). |
 | `--show-secrets` | Reveal full secrets (prompts for confirmation; dangerous). |
 | `--debug` | Show tracebacks instead of friendly errors. |
 
@@ -91,6 +99,7 @@ gitguard scan main.js                            # scan a single file
 gitguard scan ./myproject --include-hidden
 gitguard scan ./release.zip --out report.json    # JSON, no --json needed
 gitguard scan . --vulns --ai --out FIX.md        # AI-agent remediation brief
+gitguard scan . --vulns --fix --test-cmd pytest  # reviewed fix-agent edits
 gitguard scan https://github.com/owner/repo --history
 gitguard scan . --history --fail-on HIGH         # CI gate
 ```
@@ -105,6 +114,34 @@ concrete fix steps. Hand it to an agent like Claude Code to remediate:
 gitguard scan . --vulns --ai --out SECURITY_FIXES.md
 # then, in your agent: "Work through SECURITY_FIXES.md and fix each finding."
 ```
+
+### Fixing findings directly with the fix agent (`--fix`)
+
+`--fix` keeps GitGuard as the user-facing CLI and spins up a fix agent under
+the hood. GitGuard scans first, writes an in-memory remediation task, copies the
+target into a temporary workspace, asks the agent to edit that copy, displays
+the proposed diff, and applies or writes artifacts only after confirmation.
+
+```bash
+gitguard scan . --vulns --fix
+gitguard scan . --vulns --fix --test-cmd "pytest -q"
+gitguard scan ./release.zip --fix              # writes release.fixed.zip
+gitguard scan https://github.com/owner/repo --fix --patch-out fix.patch
+```
+
+Local files/folders can be applied back to the original target after review.
+ZIP targets write a fixed ZIP artifact. GitHub URL targets write a patch
+artifact only; GitGuard never pushes, opens PRs, or commits for you.
+
+For reliable edits, run `--fix` on a focused file or folder. GitGuard refuses
+very noisy runs by default because handing a large repo full of test fixtures or
+scanner examples to one agent pass is slow and usually produces bad edits.
+
+Requirements for `--fix`:
+
+- Node.js v22.19.0 or newer.
+- A configured fix-agent runtime on `PATH`.
+- Model setup/auth completed for the model you want to use.
 
 ### `rules` — list detection rules
 
@@ -128,8 +165,8 @@ checklist, README security setup steps, and a GitHub Actions secrets guide.
 gitguard doctor [target]
 ```
 
-Checks Python version, git availability, the working directory, permissions,
-and (optionally) whether a target is scannable.
+Checks Python version, git availability, fix-agent readiness for `--fix`, the
+working directory, permissions, and (optionally) whether a target is scannable.
 
 ## Detection methods
 
@@ -209,8 +246,11 @@ The job fails if any HIGH or CRITICAL secret is detected.
 - ZIP extraction is hardened against **zip-slip / path traversal** and absolute
   paths, and **skips symlink entries**.
 - Symlinks that escape the scan root are **not followed**.
-- GitGuard **never executes** scanned code and **never validates keys** by
-  calling provider APIs — nothing leaves your machine.
+- Plain GitGuard scans **never execute** scanned code and **never validate
+  keys** by calling provider APIs — nothing leaves your machine.
+- `scan --fix` is an explicit opt-in to model-assisted remediation. It copies
+  the target to a temporary workspace and allows your configured fix agent to
+  inspect and edit that copy before GitGuard shows you the diff.
 
 ## Limitations
 
@@ -241,6 +281,7 @@ gitguard/
   archive.py      # safe ZIP extraction
   report.py       # rich/JSON/CSV rendering
   fixes.py        # deterministic remediation generation
+  remediation.py  # agent-backed reviewed fix flow
   models.py       # Finding / Report dataclasses + Severity
   utils.py        # redaction, file walking, ignore rules, errors
 tests/
