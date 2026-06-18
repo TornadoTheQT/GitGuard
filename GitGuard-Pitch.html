@@ -1,0 +1,520 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>GitGuard Pitch</title>
+<style>
+  :root{
+    --paper:#0f0e0d; --paper2:#24221f; --panel:#1a1817; --ink:#f4f1ea; --ink2:#d8d3c9;
+    --muted:#a39d92; --faint:#6b665d; --line:#2a2724; --line2:#3a3631;
+    --clay:#ad2831; --clay-deep:#800e13; --clay-soft:#7a3b40; --clay-wash:#241617;
+    --serif:'Iowan Old Style','Palatino Linotype',Palatino,'Times New Roman',ui-serif,Georgia,serif;
+    --sans:'Inter',-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+    --mono:ui-monospace,'SF Mono','JetBrains Mono','Fira Code',Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html,body{height:100%}
+  body{background:var(--paper);color:var(--ink);font-family:var(--sans);-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;overflow:hidden}
+
+  .deck{position:fixed;inset:0}
+  .slide{position:absolute;inset:0;display:flex;flex-direction:column;justify-content:center;padding:11vh 9vw;opacity:0;visibility:hidden;transform:translateY(12px);transition:opacity .45s ease,transform .45s ease,visibility .45s}
+  .slide.active{opacity:1;visibility:visible;transform:none}
+
+  .top{position:fixed;top:30px;left:9vw;right:9vw;display:flex;justify-content:space-between;align-items:center;z-index:50;font-family:var(--mono);font-size:11px;letter-spacing:.22em;text-transform:uppercase;color:var(--faint)}
+  .top .brand{display:flex;align-items:center;gap:9px;color:var(--ink2)}
+  .top .brand svg{width:15px;height:15px}
+  .rail{position:fixed;left:0;top:0;height:2px;width:0;background:var(--clay);z-index:60;transition:width .45s ease}
+  .pager{position:fixed;bottom:30px;right:9vw;z-index:50;font-family:var(--mono);font-size:11px;color:var(--faint);letter-spacing:.14em}
+  .pager b{color:var(--ink)}
+  .dots{position:fixed;bottom:30px;left:9vw;z-index:50;display:flex;gap:9px}
+  .dots i{width:6px;height:6px;border-radius:50%;background:var(--line2);cursor:pointer;transition:.3s}
+  .dots i.on{background:var(--clay);transform:scale(1.3)}
+  .hint{position:fixed;bottom:29px;left:50%;transform:translateX(-50%);z-index:50;font-family:var(--mono);font-size:10.5px;color:var(--faint);letter-spacing:.1em}
+  .hint kbd{border:1px solid var(--line2);border-radius:4px;padding:1px 6px;color:var(--muted);background:var(--panel)}
+
+  .kicker{font-family:var(--mono);font-size:12px;letter-spacing:.26em;text-transform:uppercase;color:var(--clay);margin-bottom:28px;display:flex;align-items:center;gap:14px}
+  .kicker::before{content:"";width:26px;height:1px;background:var(--clay)}
+  h1{font-family:var(--serif);font-weight:600;font-size:clamp(44px,7vw,100px);line-height:1;letter-spacing:-.02em;color:var(--clay-deep)}
+  h2{font-family:var(--serif);font-weight:600;font-size:clamp(30px,4.4vw,56px);line-height:1.06;letter-spacing:-.015em;max-width:18ch}
+  .sub{font-size:clamp(16px,1.5vw,20px);color:var(--muted);max-width:60ch;line-height:1.6;margin-top:24px;font-weight:380}
+  .sub.lead{color:var(--ink2)}
+  em{font-style:normal;color:var(--clay);font-weight:500}
+  .mono{font-family:var(--mono);font-size:.92em}
+  .cur{display:inline-block;width:.55ch;height:.92em;background:var(--clay);margin-left:.12em;vertical-align:-1px;animation:blink 1.05s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+
+  /* title two-column */
+  .hero{display:grid;grid-template-columns:1.15fr .85fr;gap:5vw;align-items:center}
+  .facts{display:flex;flex-wrap:wrap;gap:34px;margin-top:38px;padding-top:28px;border-top:1px solid var(--line)}
+  .fact{display:flex;flex-direction:column;gap:5px}
+  .fact b{font-family:var(--serif);font-size:30px;font-weight:600;letter-spacing:-.02em}
+  .fact span{font-family:var(--mono);font-size:10.5px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint)}
+
+  /* scanner panel (animated ascii) */
+  .scan{border:1px solid var(--line);border-radius:14px;background:var(--panel);padding:26px 26px 22px;box-shadow:0 12px 40px -24px rgba(56,4,14,.35),0 1px 0 var(--line)}
+  .scan .head{display:flex;justify-content:space-between;align-items:center;font-family:var(--mono);font-size:11.5px;letter-spacing:.14em;text-transform:uppercase;color:var(--faint);margin-bottom:22px}
+  .scan .head .live{color:var(--clay);display:flex;align-items:center;gap:7px}
+  .scan .head .live::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--clay);box-shadow:0 0 10px rgba(173,40,49,.7);animation:pulse 1.2s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.3;transform:scale(.8)}}
+  .scan .grid{display:grid;gap:13px 6px;font-family:var(--mono);font-size:18px;line-height:1}
+  .scan .cell{text-align:center;color:var(--line2);transition:color .14s ease,text-shadow .14s ease,transform .14s ease}
+  .scan .cell.cool{color:var(--clay-soft)}
+  .scan .cell.warm{color:#d98a8f}
+  .scan .cell.hot{color:var(--clay);transform:scale(1.12)}
+  .scan .cell.secret{color:var(--clay-soft)}
+  .scan .cell.found{color:var(--clay);text-shadow:0 0 12px rgba(173,40,49,.7);transform:scale(1.18)}
+  .scan .foot{margin-top:22px;padding-top:18px;border-top:1px solid var(--line);font-family:var(--mono);font-size:12.5px;color:var(--faint);display:flex;justify-content:space-between;align-items:center}
+  .scan .foot .sstat{color:var(--clay);font-weight:600}
+
+  /* grids */
+  .grid3{display:grid;gap:1px;margin-top:40px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .g2{grid-template-columns:repeat(2,1fr)} .g3{grid-template-columns:repeat(3,1fr)} .g4{grid-template-columns:repeat(4,1fr)}
+  .cell2{background:var(--paper);padding:24px 24px}
+  .cell2 .lbl{font-family:var(--mono);font-size:11px;letter-spacing:.14em;text-transform:uppercase;color:var(--clay);margin-bottom:11px}
+  .cell2 h3{font-family:var(--serif);font-size:20px;font-weight:600;margin-bottom:8px;letter-spacing:-.01em}
+  .cell2 p{color:var(--muted);font-size:14px;line-height:1.58;font-weight:380}
+  .cell2 .n{font-family:var(--serif);font-size:clamp(32px,4.2vw,52px);font-weight:600;letter-spacing:-.02em;line-height:1;margin-bottom:12px}
+
+  /* terminal */
+  .s3{display:grid;grid-template-columns:minmax(0,1.55fr) 230px;gap:46px;align-items:center;margin-top:34px}
+  .term{background:var(--panel);border:1px solid var(--line);border-radius:8px;overflow:hidden;box-shadow:0 1px 0 var(--line)}
+  .term .bar{display:flex;align-items:center;gap:7px;padding:12px 16px;border-bottom:1px solid var(--line)}
+  .term .bar i{width:9px;height:9px;border-radius:50%;background:var(--line2)}
+  .term .bar .t{margin-left:12px;font-family:var(--mono);font-size:12px;color:var(--faint)}
+  .term .body{padding:18px 20px;font-family:var(--mono);font-size:13px;line-height:1.85;color:var(--ink2);min-height:268px}
+  .term .ln{white-space:pre-wrap;opacity:0;transform:translateY(3px);transition:opacity .25s ease,transform .25s ease}
+  .term .ln.show{opacity:1;transform:none}
+  .term .tcur{display:inline-block;width:7px;height:14px;background:var(--clay);vertical-align:-2px;animation:blink 1.05s steps(1) infinite}
+  .p-clay{color:var(--clay)} .p-faint{color:var(--faint)} .p-ink{color:var(--ink)}
+  .sev{font-weight:600}
+  .s-crit{color:#e5535b} .s-high{color:#cf6168} .s-med{color:#c98f93} .s-info{color:var(--faint)}
+
+  /* gauge */
+  .gauge-wrap{display:flex;flex-direction:column;align-items:center;gap:6px}
+  .gauge{width:200px;height:200px}
+  .gauge .track{fill:none;stroke:var(--paper2);stroke-width:9}
+  .gauge .meter{fill:none;stroke:var(--clay);stroke-width:9;stroke-linecap:round}
+  .gnum{font-family:var(--serif);font-size:18px;color:var(--ink2);margin-top:-118px;margin-bottom:84px}
+  .gnum span{font-size:46px;font-weight:600;letter-spacing:-.02em;color:var(--ink)}
+  .gnum i{font-style:normal;color:var(--faint);font-size:18px}
+  .glabel{font-family:var(--mono);font-size:11px;letter-spacing:.16em;text-transform:uppercase;color:var(--faint)}
+
+  /* converge diagram */
+  .converge{width:100%;max-width:560px;height:auto;margin:28px 0 6px}
+  .converge path{fill:none;stroke:var(--line2);stroke-width:1.5;stroke-dasharray:1;stroke-dashoffset:1}
+  .converge.draw path{stroke-dashoffset:0;transition:stroke-dashoffset .85s ease}
+  .converge.draw path:nth-of-type(2){transition-delay:.1s}
+  .converge.draw path:nth-of-type(3){transition-delay:.2s}
+  .converge.draw path:nth-of-type(4){transition-delay:.3s}
+  .converge.draw path.merge{transition-delay:.55s;stroke:var(--clay);stroke-width:2}
+  .converge .node{fill:var(--panel);stroke:var(--line2);stroke-width:1.5}
+  .converge .out{fill:var(--clay-wash);stroke:var(--clay);stroke-width:1.5;opacity:0;transition:opacity .4s ease .75s}
+  .converge.draw .out{opacity:1}
+  .converge text{font-family:var(--mono);font-size:11px;fill:var(--muted)}
+  .converge text.olab{fill:var(--clay);font-size:11.5px;font-weight:600}
+
+  /* compact chips */
+  .chips{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .chip{background:var(--paper);padding:18px 18px}
+  .chip .cn{font-family:var(--mono);font-size:11px;color:var(--clay);letter-spacing:.08em}
+  .chip h4{font-family:var(--serif);font-size:17px;font-weight:600;margin:8px 0 5px}
+  .chip p{font-size:12.5px;color:var(--muted);line-height:1.5;font-weight:380}
+
+  /* coverage bars */
+  .bars{margin-top:38px;max-width:720px;display:flex;flex-direction:column;gap:18px}
+  .bar2{display:grid;grid-template-columns:190px 1fr 38px;align-items:center;gap:18px}
+  .bar2 .name{font-family:var(--mono);font-size:12.5px;color:var(--ink2)}
+  .bar2 .track{height:7px;background:var(--paper2);border-radius:999px;overflow:hidden}
+  .bar2 .fill{height:100%;background:var(--clay);width:0;border-radius:999px;transition:width 1.05s cubic-bezier(.2,.8,.2,1)}
+  .active .fill{width:var(--w)}
+  .bar2 .val{font-family:var(--serif);font-size:18px;font-weight:600;color:var(--ink);text-align:right}
+
+  /* flow */
+  .flow{display:grid;grid-template-columns:repeat(4,1fr);gap:1px;margin-top:38px;background:var(--line);border:1px solid var(--line);border-radius:6px;overflow:hidden}
+  .step{background:var(--paper);padding:22px 20px}
+  .step .num{font-family:var(--mono);font-size:12px;color:var(--clay)}
+  .step h4{font-family:var(--serif);font-size:18px;font-weight:600;margin:11px 0 7px}
+  .step p{font-size:12.5px;color:var(--muted);line-height:1.55;font-weight:380}
+  .gate{margin-top:24px;display:inline-flex;align-items:center;gap:12px;padding:13px 20px;border:1px solid var(--clay-soft);background:var(--clay-wash);border-radius:8px;font-size:14.5px;color:var(--ink2)}
+  .gate b{color:var(--clay);font-weight:600}
+  .gate .ico{color:var(--clay)}
+
+  /* redaction */
+  .redact{margin-top:26px;display:inline-flex;align-items:center;gap:0;font-family:var(--mono);font-size:15px;background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:14px 18px;color:var(--muted)}
+  .redact .rk{color:var(--ink2)}
+  .redact .rv{color:var(--faint);transition:color .3s ease}
+  .redact .rv.hot{color:var(--clay)}
+  .redact .tag{margin-left:16px;font-size:11px;letter-spacing:.12em;text-transform:uppercase;color:var(--faint);border-left:1px solid var(--line);padding-left:16px}
+
+  /* stacked weight bar */
+  .stack{margin-top:34px;max-width:680px}
+  .stack .track{display:flex;height:30px;border-radius:7px;overflow:hidden;border:1px solid var(--line)}
+  .stack .seg{height:100%;width:0;transition:width 1s cubic-bezier(.2,.8,.2,1);display:flex;align-items:center;justify-content:center;font-family:var(--mono);font-size:12px;color:#fff}
+  .active .stack .seg{width:var(--w)}
+  .stack .legend{display:flex;gap:22px;margin-top:14px;font-family:var(--mono);font-size:11.5px;color:var(--muted)}
+  .stack .legend i{display:inline-block;width:9px;height:9px;border-radius:2px;margin-right:7px;vertical-align:0}
+
+  ul.clean{list-style:none;margin-top:28px;display:flex;flex-direction:column;gap:16px;max-width:78ch}
+  ul.clean li{display:grid;grid-template-columns:18px 1fr;gap:14px;font-size:16px;color:var(--ink2);line-height:1.55;font-weight:380}
+  ul.clean li .mk{color:var(--clay);font-family:var(--mono)}
+  ul.clean li span.m{color:var(--muted)}
+
+  .ribbon{display:flex;flex-wrap:wrap;margin-top:40px;border-top:1px solid var(--line)}
+  .ribbon span{font-family:var(--mono);font-size:12px;color:var(--muted);letter-spacing:.04em;padding:18px 28px 0 0}
+  .ribbon b{color:var(--clay);font-weight:600}
+  .cmd{margin-top:32px;font-family:var(--mono);font-size:clamp(13px,1.4vw,16px);color:var(--ink);display:inline-flex;align-items:center;gap:12px;border:1px solid var(--line2);background:var(--panel);border-radius:8px;padding:14px 20px}
+  .cmd .pr{color:var(--clay)}
+
+  @media (max-width:880px){
+    .hero,.s3{grid-template-columns:1fr}
+    .g3,.g4,.flow,.chips{grid-template-columns:1fr 1fr}
+    .scan{display:none}
+  }
+</style>
+</head>
+<body>
+
+<div class="rail" id="rail"></div>
+<div class="top">
+  <div class="brand"><svg viewBox="0 0 24 24" fill="none" stroke="#ad2831" stroke-width="1.4"><path d="M12 2 4 5v6c0 5 3.5 8.5 8 11 4.5-2.5 8-6 8-11V5l-8-3Z"/><path d="m9 12 2 2 4-4"/></svg> GitGuard</div>
+  <div>Offline scanning · Human-gated fix harness · Pitch</div>
+</div>
+
+<div class="deck" id="deck">
+
+  <!-- 1 TITLE -->
+  <section class="slide">
+    <div class="hero">
+      <div>
+        <div class="kicker">Security for the agentic coding era</div>
+        <h1>GitGuard<span class="cur"></span></h1>
+        <p class="sub lead">A production-grade secret-scanning CLI with a custom local fix harness. It finds exposed API keys, tokens, passwords, and private keys across folders, ZIP archives, and full git history — then helps you remediate through a model you choose, with you still at the wheel. Scans stay offline; fixes stay reviewable.</p>
+        <div class="facts">
+          <div class="fact"><b>4</b><span>Detection engines</span></div>
+          <div class="fact"><b>30+</b><span>Rules</span></div>
+          <div class="fact"><b>100%</b><span>Offline scans</span></div>
+          <div class="fact"><b>Your</b><span>Model · harness</span></div>
+        </div>
+      </div>
+      <div class="scan" data-cols="18" data-rows="10">
+        <div class="head"><span>./scanning repo</span><span class="live">live</span></div>
+        <div class="grid"></div>
+        <div class="foot"><span>1,284 files · 96k lines</span><span class="sstat">scanning…</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 2 PROBLEM -->
+  <section class="slide">
+    <div class="kicker">The context</div>
+    <h2>More agents at the helm. Fewer hands on the wheel.</h2>
+    <p class="sub">In agentic coding workflows, teams increasingly let AI agents edit, refactor, and ship without reviewing every line. That trade-off makes sense — until a credential lands in a commit. Models are powerful editors, but they are not absolute guardrails against leaking sensitive information.</p>
+    <div class="grid3 g3">
+      <div class="cell2"><div class="lbl">Shift</div><h3>Less micromanagement</h3><p>Developers hand off boilerplate, refactors, and even security fixes to coding agents. The workflow is faster; oversight is thinner.</p></div>
+      <div class="cell2"><div class="lbl">Gap</div><h3>Models aren't vaults</h3><p>An agent can paste a live key into config, echo a token in a snippet, or miss a secret already buried in git history. No model promise replaces deterministic detection.</p></div>
+      <div class="cell2"><div class="lbl">Stakes</div><h3>Minutes, not days</h3><p>Once exposed, keys are scraped fast. You need offline scanning and a fix path you control — not blind trust in the agent that wrote the leak.</p></div>
+    </div>
+  </section>
+
+  <!-- 2b WHY -->
+  <section class="slide">
+    <div class="kicker">Our addition</div>
+    <h2>Scanning is necessary. The harness is the spin.</h2>
+    <p class="sub">Secret scanning belongs in every serious pipeline — GitGuard does that offline, with context-aware scoring and full git-history coverage. What we added on top is a <em>custom local fix harness</em>: GitGuard prepares the task, sandboxes the target, and runs your chosen model inside strict boundaries. You review every diff before anything touches your repo.</p>
+    <ul class="clean">
+      <li><span class="mk">›</span><span><b>Baseline, done right.</b> Four correlated detectors, no provider-side validation, no exfiltration. <span class="m">The scanner your agents can't replace.</span></span></li>
+      <li><span class="mk">›</span><span><b>Harness, not autopilot.</b> <span class="mono">--fix</span> copies into a temp workspace, invokes your configured agent once, and stops. <span class="m">No commits, no pushes, no edits outside the sandbox.</span></span></li>
+      <li><span class="mk">›</span><span><b>Model of your choice.</b> Pass <span class="mono">--model provider/model</span> or set a default at setup. <span class="m">We run Claude Sonnet 4.6 — swap it anytime.</span></span></li>
+    </ul>
+  </section>
+
+  <!-- 3 WHAT IT IS -->
+  <section class="slide">
+    <div class="kicker">What it does</div>
+    <h2>One command. Scan, score, remediate.</h2>
+    <div class="s3">
+      <div class="term" data-term>
+        <div class="bar"><i></i><i></i><i></i><span class="t">gitguard scan . --history --include-hidden</span></div>
+        <div class="body">
+          <div class="ln"><span class="p-clay">$</span> <span class="p-ink">gitguard scan . --history --include-hidden</span></div>
+          <div class="ln p-faint">  GitGuard Scan Report · Risk Score <span class="p-ink">100/100</span></div>
+          <div class="ln">&nbsp;</div>
+          <div class="ln"><span class="sev s-crit">CRITICAL</span>  <span class="p-faint">.env:1</span>          Stripe Live Secret Key</div>
+          <div class="ln"><span class="sev s-crit">CRITICAL</span>  <span class="p-faint">.env:2</span>          Database Connection URL</div>
+          <div class="ln"><span class="sev s-crit">CRITICAL</span>  <span class="p-faint">id_rsa:1</span>        Private Key Block</div>
+          <div class="ln"><span class="sev s-high">HIGH</span>      <span class="p-faint">src/client.ts:1</span> OpenAI API Key</div>
+          <div class="ln"><span class="sev s-info">INFO</span>      <span class="p-faint">dev.json:1</span>      Sensitive Var <span class="p-faint">(placeholder)</span></div>
+          <div class="ln">&nbsp;</div>
+          <div class="ln p-faint">  Coverage · Provider 2 · Generic 2 · Context 1</div>
+        </div>
+      </div>
+      <div class="gauge-wrap" data-gauge="100">
+        <svg class="gauge" viewBox="0 0 200 200">
+          <circle class="track" cx="100" cy="100" r="84"/>
+          <circle class="meter" cx="100" cy="100" r="84" transform="rotate(-90 100 100)"/>
+        </svg>
+        <div class="gnum"><span data-count="100">0</span><i>/100</i></div>
+        <div class="glabel">Risk Score</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- 4 ENGINE -->
+  <section class="slide">
+    <div class="kicker">How it works · the engine</div>
+    <h2>Four detectors, then correlation.</h2>
+    <svg class="converge" data-draw viewBox="0 0 560 150">
+      <path d="M120,25 C200,25 220,75 290,75"/>
+      <path d="M120,58 C200,58 230,75 290,75"/>
+      <path d="M120,92 C200,92 230,75 290,75"/>
+      <path d="M120,125 C200,125 220,75 290,75"/>
+      <path class="merge" d="M330,75 L430,75"/>
+      <rect class="node" x="14" y="13" width="104" height="24" rx="6"/><text x="30" y="29">Provider</text>
+      <rect class="node" x="14" y="46" width="104" height="24" rx="6"/><text x="30" y="62">Generic</text>
+      <rect class="node" x="14" y="80" width="104" height="24" rx="6"/><text x="30" y="96">Assignment</text>
+      <rect class="node" x="14" y="113" width="104" height="24" rx="6"/><text x="36" y="129">Entropy</text>
+      <circle class="node" cx="310" cy="75" r="20"/><text x="299" y="79">⋈</text>
+      <rect class="out" x="430" y="58" width="120" height="34" rx="8"/><text class="olab" x="446" y="79">1 finding</text>
+    </svg>
+    <p class="sub" style="margin-top:6px">Overlapping hits merge, so one secret is reported once, at its strongest. A <span class="mono">DATABASE_URL</span> is a single finding, not four.</p>
+    <div class="chips" style="margin-top:26px">
+      <div class="chip"><div class="cn">01 · vendor</div><h4>Provider</h4><p>AWS, GitHub, Stripe, OpenAI, Slack, Twilio…</p></div>
+      <div class="chip"><div class="cn">02 · format</div><h4>Generic</h4><p>Keys, JWTs, Postgres / Redis / SMTP URLs.</p></div>
+      <div class="chip"><div class="cn">03 · name</div><h4>Assignment</h4><p>Secrets flagged by variable name across 8 formats.</p></div>
+      <div class="chip"><div class="cn">04 · random</div><h4>Entropy</h4><p>High-randomness strings in secret context.</p></div>
+    </div>
+  </section>
+
+  <!-- 5 CONTEXT -->
+  <section class="slide">
+    <div class="kicker">The clever part · context scoring</div>
+    <h2>It reads the room, not just the regex.</h2>
+    <p class="sub">A raw match isn't a verdict. GitGuard scores the words around every hit, so real keys rise and noise sinks.</p>
+    <div class="grid3 g3">
+      <div class="cell2"><div class="lbl">↑ Promote</div><h3>Raise severity</h3><p>Proximity to <span class="mono">password</span>, <span class="mono">live</span>, <span class="mono">production</span>, or a <span class="mono">.env</span>/config file lifts severity and confidence.</p></div>
+      <div class="cell2"><div class="lbl">↓ Demote</div><h3>Sink the noise</h3><p>Markers like <span class="mono">placeholder</span>, <span class="mono">example.com</span>, <span class="mono">CHANGE_ME</span> drop a finding toward INFO instead of crying wolf.</p></div>
+      <div class="cell2"><div class="lbl">≈ Keep</div><h3>Surface, don't hide</h3><p>Placeholders are reported as INFO, so reviewers see intent without the alert fatigue. Recall and precision, together.</p></div>
+    </div>
+  </section>
+
+  <!-- 6 COVERAGE -->
+  <section class="slide">
+    <div class="kicker">Transparency · detection coverage</div>
+    <h2>It shows its work.</h2>
+    <p class="sub">Every scan reports how many findings each engine contributed, so blind spots stay visible, not hidden behind a single number.</p>
+    <div class="bars">
+      <div class="bar2" style="--w:96%"><div class="name">Provider</div><div class="track"><div class="fill"></div></div><div class="val" data-count="12">0</div></div>
+      <div class="bar2" style="--w:72%"><div class="name">Generic / structural</div><div class="track"><div class="fill"></div></div><div class="val" data-count="9">0</div></div>
+      <div class="bar2" style="--w:56%"><div class="name">Assignment / context</div><div class="track"><div class="fill"></div></div><div class="val" data-count="7">0</div></div>
+      <div class="bar2" style="--w:40%"><div class="name">Entropy</div><div class="track"><div class="fill"></div></div><div class="val" data-count="5">0</div></div>
+      <div class="bar2" style="--w:32%"><div class="name">Vulnerabilities</div><div class="track"><div class="fill"></div></div><div class="val" data-count="4">0</div></div>
+    </div>
+    <p class="sub">A clean scan tells you where you looked, not just that nothing turned up.</p>
+  </section>
+
+  <!-- 7 BEYOND -->
+  <section class="slide">
+    <div class="kicker">Beyond secrets</div>
+    <h2>History scanning &amp; a vulnerability mode.</h2>
+    <div class="grid3 g2">
+      <div class="cell2"><div class="lbl">--history</div><h3>The forgotten commit</h3><p>Scans added lines across every commit (up to 500) and surfaces secrets deleted from the tree but still live in history, with the commit hash, author and date.</p></div>
+      <div class="cell2"><div class="lbl">--vulns</div><h3>Code, not just keys</h3><p>15 advisory patterns: SQL injection, XSS, command injection, path traversal, SSRF, unsafe <span class="mono">eval</span>, weak crypto, IDOR, prototype pollution &amp; more.</p></div>
+    </div>
+    <p class="sub">One engine, four targets: a single file, a folder, a <span class="mono">.zip</span>, or a GitHub URL.</p>
+  </section>
+
+  <!-- 8 SAFETY -->
+  <section class="slide">
+    <div class="kicker">Why offline matters</div>
+    <h2>Deterministic detection. No trust-the-model scanning.</h2>
+    <p class="sub" style="margin-top:14px;margin-bottom:0">Agents may suggest fixes; GitGuard verifies leaks with rules, not LLM guesswork. Your secrets never leave the machine during a scan.</p>
+    <div class="grid3 g4">
+      <div class="cell2"><div class="lbl">01</div><h3>No exfiltration</h3><p>Never executes scanned code, never validates keys against provider APIs.</p></div>
+      <div class="cell2"><div class="lbl">02</div><h3>Redacted</h3><p>Secrets show as <span class="mono">first6…last4</span>; full values only on explicit confirmation.</p></div>
+      <div class="cell2"><div class="lbl">03</div><h3>Hardened</h3><p>ZIP extraction resists zip-slip &amp; traversal; remote clones use a temp dir, deleted after.</p></div>
+      <div class="cell2"><div class="lbl">04</div><h3>Honest</h3><p>A clean scan is never sold as a guarantee. Treat committed credentials as compromised.</p></div>
+    </div>
+    <div class="redact" data-from="demo_sk_live_gitguard_pitch_placeholder_xx">
+      <span class="rk">STRIPE_KEY&nbsp;=&nbsp;</span><span class="rv">…</span><span class="tag">redacted by default</span>
+    </div>
+  </section>
+
+  <!-- 9 REMEDIATION -->
+  <section class="slide">
+    <div class="kicker">The fix harness</div>
+    <h2>Agent-assisted remediation, bounded and reviewable.</h2>
+    <p class="sub" style="margin-top:14px"><span class="mono">--ai</span> exports a Markdown brief if you want to remediate elsewhere. <span class="mono">--fix</span> uses GitGuard's <em>custom local harness</em> — a disposable workspace, a structured task contract, and a model you configure (default: <span class="mono">claude-sonnet-4-6</span> via <span class="mono">--model</span>).</p>
+    <div class="flow">
+      <div class="step"><div class="num">01</div><h4>Scan &amp; isolate</h4><p>Findings become a remediation brief. GitGuard copies the target into a temp workspace — your tree stays untouched.</p></div>
+      <div class="step"><div class="num">02</div><h4>Harness + model</h4><p>The configured agent edits only inside the sandbox. One pass, smallest safe changes. No git commits, no network exfiltration.</p></div>
+      <div class="step"><div class="num">03</div><h4>Diff &amp; review</h4><p>GitGuard computes the unified diff, validates paths, and presents it for your review — not the agent's.</p></div>
+      <div class="step"><div class="num">04</div><h4>Apply on consent</h4><p>Only after you confirm: apply locally, write a <span class="mono">.fixed.zip</span>, or save a patch. Optional <span class="mono">--test-cmd</span> verifies the result.</p></div>
+    </div>
+    <div class="gate"><span class="ico">●</span> <span><b>Human-in-the-loop gate.</b>&nbsp; The harness enables the model; GitGuard keeps authority over scan, sandbox, diff, and apply.</span></div>
+  </section>
+
+  <!-- 10 SCORING -->
+  <section class="slide">
+    <div class="kicker">Severity &amp; risk</div>
+    <h2>A score that means something.</h2>
+    <p class="sub">Five ordered levels feed a single 0 to 100 score, weighted by severity, scaled by confidence, with extra weight for history and config or prod files.</p>
+    <div class="stack">
+      <div class="track">
+        <div class="seg" style="--w:51%;background:#800e13">CRITICAL · +35</div>
+        <div class="seg" style="--w:29%;background:#ad2831">HIGH · +20</div>
+        <div class="seg" style="--w:15%;background:#c75d64">MED · +10</div>
+        <div class="seg" style="--w:5%;background:#d8c4b0"></div>
+      </div>
+      <div class="legend">
+        <span><i style="background:#800e13"></i>Critical +35</span>
+        <span><i style="background:#ad2831"></i>High +20</span>
+        <span><i style="background:#c75d64"></i>Medium +10</span>
+        <span><i style="background:#d8c4b0"></i>Low +3</span>
+      </div>
+    </div>
+    <p class="sub"><span class="mono">--fail-on HIGH</span> turns the score into a CI gate, so the build fails the moment a HIGH or CRITICAL secret lands.</p>
+  </section>
+
+  <!-- 11 DX -->
+  <section class="slide">
+    <div class="kicker">Developer experience</div>
+    <h2>Fits the agentic workflow — without surrendering control.</h2>
+    <div class="grid3 g2">
+      <div class="cell2"><div class="lbl">Install</div><h3>One command</h3><p><span class="mono">install.sh</span> builds the CLI; <span class="mono">--with-fix-agent</span> installs the harness runtime and configures your default model.</p></div>
+      <div class="cell2"><div class="lbl">setup-fix-agent</div><h3>Pick your model</h3><p>Installs the OpenClaw harness, sets <span class="mono">claude-sonnet-4-6</span> by default, and checks auth. Override anytime with <span class="mono">--model</span>.</p></div>
+      <div class="cell2"><div class="lbl">CI</div><h3>Native gate</h3><p><span class="mono">--fail-on HIGH</span> blocks risky merges. Export JSON, CSV, or an <span class="mono">--ai</span> brief for agents that live outside GitGuard.</p></div>
+      <div class="cell2"><div class="lbl">doctor</div><h3>Self-diagnosing</h3><p>Checks Python, git, harness readiness, permissions, and whether a target is scannable before you waste a fix pass.</p></div>
+    </div>
+  </section>
+
+  <!-- 12 CLOSING -->
+  <section class="slide">
+    <div class="kicker">Scan offline. Steer the fix.</div>
+    <h1>You don't have to steer every line.</h1>
+    <p class="sub lead">GitGuard doesn't fight agentic coding — it closes the gap models leave open. Catch secrets in your tree, your ZIP, and the commit you forgot; score the risk with context; remediate through a local harness running the model you trust. Nothing leaves the machine until you approve.</p>
+    <div class="ribbon">
+      <span><b>4</b> detectors + correlation</span>
+      <span><b>custom</b> fix harness</span>
+      <span><b>sonnet 4.6</b> default · swappable</span>
+      <span><b>--history</b> aware</span>
+      <span><b>human-gated</b> apply</span>
+      <span><b>100%</b> offline scans</span>
+    </div>
+    <div class="cmd"><span class="pr">$</span> gitguard scan . --history --include-hidden --fix --model claude-cli/claude-sonnet-4-6</div>
+  </section>
+
+</div>
+
+<div class="dots" id="dots"></div>
+<div class="hint">Navigate with <kbd>←</kbd> <kbd>→</kbd> · <kbd>F</kbd> fullscreen</div>
+<div class="pager" id="pager"></div>
+
+<script>
+  const slides=[...document.querySelectorAll('.slide')];
+  const dots=document.getElementById('dots');
+  const rail=document.getElementById('rail');
+  const pager=document.getElementById('pager');
+  let i=0;
+
+  slides.forEach((_,n)=>{const d=document.createElement('i');d.onclick=()=>go(n);dots.appendChild(d);});
+  const dotEls=[...dots.children];
+
+  /* build the animated scanner grid once */
+  const scanEl=document.querySelector('.scan');
+  if(scanEl){
+    const cols=+scanEl.dataset.cols, rows=+scanEl.dataset.rows;
+    const secrets=new Set(['1-5','3-13','5-8','7-16','9-3']);
+    scanEl.querySelector('.grid').style.gridTemplateColumns=`repeat(${cols},1fr)`;
+    let h='';
+    for(let r=0;r<rows;r++) for(let c=0;c<cols;c++){
+      const sec=secrets.has(r+'-'+c);
+      h+=`<span class="cell${sec?' secret':''}" data-c="${c}">${sec?'▪':'·'}</span>`;
+    }
+    scanEl.querySelector('.grid').innerHTML=h;
+  }
+
+  let scanTimer=null, redactTimer=null;
+  function startScan(el){
+    stopScan();
+    const cells=[...el.querySelectorAll('.cell')];
+    const cols=+el.dataset.cols, stat=el.querySelector('.sstat');
+    let col=0, found=0;
+    cells.forEach(c=>c.classList.remove('found','hot','warm','cool'));
+    if(stat){stat.textContent='scanning…';}
+    scanTimer=setInterval(()=>{
+      cells.forEach(c=>{const cc=+c.dataset.c;
+        c.classList.toggle('hot',cc===col);
+        c.classList.toggle('warm',cc===col-1);
+        c.classList.toggle('cool',cc===col-2);
+      });
+      el.querySelectorAll(`.cell.secret[data-c="${col}"]`).forEach(c=>{
+        if(!c.classList.contains('found')){c.classList.add('found');found++;if(stat)stat.textContent=`● ${found} secret${found>1?'s':''} found`;}
+      });
+      col++; if(col>cols+3) col=0;
+    },95);
+  }
+  function stopScan(){if(scanTimer){clearInterval(scanTimer);scanTimer=null;}}
+
+  function startRedact(el){
+    stopRedact();
+    const full=el.dataset.from, red=full.slice(0,6)+'••••••••••'+full.slice(-3);
+    const span=el.querySelector('.rv'); let on=false;
+    const tick=()=>{span.textContent=on?full:red;span.classList.toggle('hot',on);on=!on;};
+    tick(); redactTimer=setInterval(tick,1700);
+  }
+  function stopRedact(){if(redactTimer){clearInterval(redactTimer);redactTimer=null;}}
+
+  function countUp(el,to){
+    const dur=1100; let s=null;
+    const ease=p=>1-Math.pow(1-p,3);
+    function f(t){if(!s)s=t;const p=Math.min(1,(t-s)/dur);el.textContent=Math.round(to*ease(p)).toLocaleString();if(p<1)requestAnimationFrame(f);}
+    el.textContent='0'; requestAnimationFrame(f);
+  }
+
+  function revealTerm(t){
+    const lns=[...t.querySelectorAll('.ln')];
+    lns.forEach(l=>l.classList.remove('show'));
+    t.querySelectorAll('.tcur').forEach(c=>c.remove());
+    lns.forEach((l,k)=>setTimeout(()=>{
+      l.classList.add('show');
+      if(k===lns.length-1){const cur=document.createElement('span');cur.className='tcur';l.appendChild(cur);}
+    }, 140+k*150));
+  }
+
+  function runAnims(s){
+    s.querySelectorAll('[data-gauge]').forEach(g=>{
+      const m=g.querySelector('.meter'); const r=m.r.baseVal.value; const C=2*Math.PI*r;
+      m.style.strokeDasharray=C; m.style.transition='none'; m.style.strokeDashoffset=C;
+      m.getBoundingClientRect();
+      requestAnimationFrame(()=>{m.style.transition='stroke-dashoffset 1.25s cubic-bezier(.2,.8,.2,1)';m.style.strokeDashoffset=C*(1-(+g.dataset.gauge/100));});
+    });
+    s.querySelectorAll('[data-count]').forEach(el=>countUp(el,+el.dataset.count));
+    s.querySelectorAll('[data-term]').forEach(revealTerm);
+    s.querySelectorAll('[data-draw]').forEach(sv=>{sv.classList.remove('draw');sv.getBoundingClientRect();sv.classList.add('draw');});
+    if(s.querySelector('.scan')) startScan(s.querySelector('.scan')); else stopScan();
+    if(s.querySelector('.redact')) startRedact(s.querySelector('.redact')); else stopRedact();
+  }
+
+  function go(n){
+    i=Math.max(0,Math.min(slides.length-1,n));
+    slides.forEach((s,k)=>s.classList.toggle('active',k===i));
+    dotEls.forEach((d,k)=>d.classList.toggle('on',k===i));
+    rail.style.width=(i/(slides.length-1)*100)+'%';
+    pager.innerHTML='<b>'+String(i+1).padStart(2,'0')+'</b>&nbsp;/&nbsp;'+String(slides.length).padStart(2,'0');
+    runAnims(slides[i]);
+  }
+  const next=()=>go(i+1), prev=()=>go(i-1);
+  document.addEventListener('keydown',e=>{
+    if(['ArrowRight','ArrowDown',' ','PageDown'].includes(e.key)){e.preventDefault();next();}
+    else if(['ArrowLeft','ArrowUp','PageUp'].includes(e.key)){e.preventDefault();prev();}
+    else if(e.key==='Home')go(0); else if(e.key==='End')go(slides.length-1);
+    else if(e.key.toLowerCase()==='f'){document.fullscreenElement?document.exitFullscreen():document.documentElement.requestFullscreen();}
+  });
+  let sx=null;
+  addEventListener('touchstart',e=>sx=e.touches[0].clientX,{passive:true});
+  addEventListener('touchend',e=>{if(sx===null)return;const dx=e.changedTouches[0].clientX-sx;if(Math.abs(dx)>50)dx<0?next():prev();sx=null;});
+  go(0);
+</script>
+</body>
+</html>
