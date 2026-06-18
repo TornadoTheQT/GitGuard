@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import shutil
+import subprocess
 import sys
 import tempfile
 from pathlib import Path
@@ -462,7 +463,7 @@ def _run_fix_flow(
         write_patch,
     )
 
-    require_fix_agent_available()
+    require_fix_agent_available(model=model)
     prepared = prepare_remediation_target(target)
     try:
         prompt = build_remediation_prompt(report, prepared)
@@ -740,6 +741,207 @@ def _render_fix_plan(plan) -> None:
 
 
 # ---------------------------------------------------------------------------
+# setup-fix-agent
+# ---------------------------------------------------------------------------
+
+@app.command("setup-fix-agent")
+def setup_fix_agent(
+    install: bool = typer.Option(
+        True,
+        "--install/--no-install",
+        help="Install or update the external fix-agent npm packages.",
+    ),
+    auth: bool = typer.Option(
+        True,
+        "--auth/--no-auth",
+        help="Check Claude auth and launch login when needed.",
+    ),
+    model: Optional[str] = typer.Option(
+        None,
+        "--model",
+        help="Default fix-agent model to configure.",
+    ),
+    debug: bool = typer.Option(False, "--debug", help="Show tracebacks on error."),
+) -> None:
+    """Install and configure the optional fix-agent stack used by scan --fix."""
+
+    from .remediation import (
+        DEFAULT_FIX_AGENT_MODEL,
+        FIX_AGENT_NPM_PACKAGES,
+        check_claude_environment,
+        check_fix_agent_environment,
+        npm_global_bin_path,
+    )
+
+    selected_model = model or DEFAULT_FIX_AGENT_MODEL
+    try:
+        if install:
+            npm = _require_node_and_npm_for_setup()
+            console.print(
+                "[cyan]Installing fix-agent runtime packages with npm...[/cyan]"
+            )
+            _stream_command([npm, "install", "-g", "--silent", *FIX_AGENT_NPM_PACKAGES])
+            npm_bin = npm_global_bin_path()
+            if npm_bin is not None:
+                was_on_path = _path_on_shell_path(npm_bin)
+                _prepend_path_for_current_process(npm_bin)
+                if not was_on_path:
+                    console.print(
+                        "[yellow]Note:[/yellow] add npm's global bin directory "
+                        f"to PATH for future shells:\n  export PATH=\"{npm_bin}:$PATH\""
+                    )
+        else:
+            console.print("[yellow]Skipped npm package installation.[/yellow]")
+
+        _run_best_effort(
+            [
+                "openclaw",
+                "setup",
+                "--non-interactive",
+                "--accept-risk",
+                "--mode",
+                "local",
+                "--workspace",
+                str(Path.home() / ".openclaw" / "workspace"),
+            ],
+            "Preparing local fix-agent workspace",
+            acceptable_failure="Gateway did not become reachable",
+        )
+        _run_best_effort(
+            ["openclaw", "models", "set", selected_model],
+            f"Setting default fix-agent model to {selected_model}",
+        )
+
+        if auth:
+            claude = check_claude_environment()
+            if claude.ok:
+                console.print(f"[green]✓ {claude.detail}[/green]")
+            else:
+                if shutil.which("claude") is None:
+                    raise GitGuardError(
+                        "Claude CLI is not installed.",
+                        fixes=[
+                            "Run `gitguard setup-fix-agent --install`",
+                            "Make sure npm's global bin directory is on PATH",
+                        ],
+                    )
+                console.print(
+                    "[yellow]Claude CLI is not logged in. Launching login...[/yellow]"
+                )
+                _stream_command(["claude", "auth", "login"])
+        else:
+            console.print("[yellow]Skipped Claude auth check.[/yellow]")
+
+        status = check_fix_agent_environment(check_claude=auth)
+        if not status.ready:
+            raise GitGuardError(
+                "Fix-agent setup is incomplete.",
+                reason=status.problem_summary(),
+                fixes=[
+                    "Run `gitguard setup-fix-agent` again after fixing the issue",
+                    "If Claude login opened a browser, finish that login and retry",
+                    "Run `gitguard doctor` to see remaining setup checks",
+                ],
+            )
+
+        console.print("[green]✓ Fix-agent setup complete.[/green]")
+    except GitGuardError as exc:
+        _print_error(exc, debug)
+        raise typer.Exit(2)
+
+
+def _require_node_and_npm_for_setup() -> str:
+    from .remediation import MIN_NODE_VERSION, parse_node_version
+
+    node = shutil.which("node")
+    npm = shutil.which("npm")
+    if not node or not npm:
+        raise GitGuardError(
+            "Node.js and npm are required for fix-agent setup.",
+            reason="node or npm was not found on PATH",
+            fixes=[
+                "Install Node.js v22.19.0 or newer",
+                "On macOS with Homebrew: `brew install node`",
+                "Then re-run `gitguard setup-fix-agent`",
+            ],
+        )
+
+    proc = subprocess.run(
+        [node, "--version"], capture_output=True, text=True, check=False
+    )
+    raw = (proc.stdout or proc.stderr).strip()
+    parsed = parse_node_version(raw)
+    if proc.returncode != 0 or parsed is None or parsed[:2] < MIN_NODE_VERSION:
+        raise GitGuardError(
+            "Node.js is too old for fix-agent setup.",
+            reason=f"Found {raw or 'unknown'}; need v22.19.0 or newer",
+            fixes=[
+                "Upgrade Node.js to v22.19.0 or newer",
+                "On macOS with Homebrew: `brew upgrade node`",
+                "Then re-run `gitguard setup-fix-agent`",
+            ],
+        )
+    return npm
+
+
+def _stream_command(command: list[str]) -> None:
+    try:
+        proc = subprocess.run(command, check=False)
+    except OSError as exc:
+        raise GitGuardError(
+            f"Could not run `{command[0]}`.",
+            reason=str(exc),
+            fixes=["Make sure the command is installed and on PATH"],
+        ) from exc
+    if proc.returncode != 0:
+        raise GitGuardError(
+            f"`{command[0]}` exited with status {proc.returncode}.",
+            fixes=[
+                "Review the command output above",
+                "Fix the reported setup issue and retry",
+            ],
+        )
+
+
+def _run_best_effort(
+    command: list[str],
+    label: str,
+    *,
+    acceptable_failure: Optional[str] = None,
+) -> None:
+    console.print(f"[cyan]{label}...[/cyan]")
+    try:
+        proc = subprocess.run(command, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        console.print(f"[yellow]Skipped:[/yellow] {exc}")
+        return
+    if proc.returncode != 0:
+        combined = "\n".join(part for part in (proc.stdout, proc.stderr) if part)
+        if acceptable_failure and acceptable_failure in combined:
+            console.print(f"[green]✓ {label}[/green]")
+            return
+        console.print(
+            f"[yellow]Warning:[/yellow] setup step exited {proc.returncode}; "
+            "`gitguard doctor` will show whether this still matters."
+        )
+        return
+    console.print(f"[green]✓ {label}[/green]")
+
+
+def _prepend_path_for_current_process(path: Path) -> None:
+    current = os.environ.get("PATH", "")
+    parts = current.split(os.pathsep) if current else []
+    value = str(path)
+    if value not in parts:
+        os.environ["PATH"] = value + os.pathsep + current if current else value
+
+
+def _path_on_shell_path(path: Path) -> bool:
+    value = str(path)
+    return value in (os.environ.get("PATH", "").split(os.pathsep))
+
+
+# ---------------------------------------------------------------------------
 # doctor
 # ---------------------------------------------------------------------------
 
@@ -798,6 +1000,12 @@ def doctor(
         agent_status.agent.ok,
         agent_status.agent.detail,
     )
+    if agent_status.claude is not None:
+        row(
+            "Claude auth for --fix",
+            agent_status.claude.ok,
+            agent_status.claude.detail,
+        )
 
     cwd = Path.cwd()
     row("Working directory", cwd.exists(), str(cwd))
@@ -821,7 +1029,8 @@ def doctor(
     if not agent_status.ready:
         console.print(
             "[yellow]Note:[/yellow] `gitguard scan --fix` requires Node.js "
-            "v22.19.0+ and a configured external fix-agent runtime."
+            "v22.19.0+, a configured external fix-agent runtime, and Claude "
+            "auth for the default model. Run `gitguard setup-fix-agent`."
         )
 
 

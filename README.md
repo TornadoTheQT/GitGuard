@@ -28,6 +28,8 @@ interpreter, creates a virtual environment, and installs GitGuard into it:
 # from a clone of this repo
 ./install.sh            # installs the gitguard CLI
 ./install.sh --dev      # also installs dev/test extras (pytest)
+./install.sh --with-fix-agent
+# installs GitGuard plus scan --fix support; prompts for Claude login if needed
 
 source .venv/bin/activate
 gitguard --help
@@ -36,7 +38,9 @@ gitguard --help
 The installer reads the minimum Python version from `pyproject.toml`, probes the
 versioned interpreters on your `PATH` (`python3.13`, `python3.12`, … down to the
 minimum, then `python3`/`python`), and uses the newest one that qualifies. Set
-`VENV=path` to install into a different location.
+`VENV=path` to install into a different location. Interactive installs also
+offer to set up `scan --fix`; use `--with-fix-agent` to require that setup or
+`--without-fix-agent` to skip it.
 
 Prefer to do it by hand? The classic flow still works:
 
@@ -140,8 +144,15 @@ scanner examples to one agent pass is slow and usually produces bad edits.
 Requirements for `--fix`:
 
 - Node.js v22.19.0 or newer.
-- A configured fix-agent runtime on `PATH`.
-- Model setup/auth completed for the model you want to use.
+- npm for installing the fix-agent runtime packages.
+- Claude CLI authentication for the default fix-agent model.
+
+Run this once to install/update the runtime and launch Claude login if needed:
+
+```bash
+gitguard setup-fix-agent
+gitguard doctor
+```
 
 ### `rules` — list detection rules
 
@@ -167,6 +178,18 @@ gitguard doctor [target]
 
 Checks Python version, git availability, fix-agent readiness for `--fix`, the
 working directory, permissions, and (optionally) whether a target is scannable.
+
+### `setup-fix-agent` — install `scan --fix` support
+
+```bash
+gitguard setup-fix-agent
+gitguard setup-fix-agent --no-auth       # install packages, skip Claude login
+gitguard setup-fix-agent --no-install    # only repair config/auth
+```
+
+This installs or updates the optional npm packages used by `scan --fix`, creates
+the local agent workspace, sets the default Claude-backed model, and starts
+`claude auth login` when Claude is not logged in.
 
 ## Detection methods
 

@@ -52,6 +52,21 @@ def _fake_tool_dir(tmp_path: Path) -> Path:
         "(root / '.env.example').write_text('STRIPE_SECRET_KEY=your_value_here\\n')\n"
         "print(json.dumps({'payloads': [{'text': 'done'}]}))\n",
     )
+    _write_executable(
+        bin_dir / "claude",
+        "#!/usr/bin/env python3\n"
+        "import json, sys\n"
+        "if '--version' in sys.argv:\n"
+        "    print('2.1.157 (Claude Code)')\n"
+        "    raise SystemExit(0)\n"
+        "if sys.argv[1:4] == ['auth', 'status', '--json']:\n"
+        "    print(json.dumps({'loggedIn': True, 'authMethod': 'claude.ai'}))\n"
+        "    raise SystemExit(0)\n"
+        "if sys.argv[1:3] == ['auth', 'login']:\n"
+        "    print('login ok')\n"
+        "    raise SystemExit(0)\n"
+        "print('ok')\n",
+    )
     return bin_dir
 
 
@@ -70,6 +85,8 @@ def test_check_fix_agent_environment_with_fake_tools(tmp_path, monkeypatch):
     assert status.ready
     assert status.node.version == "v22.19.0"
     assert "FixAgent" in status.agent.version
+    assert status.claude is not None
+    assert status.claude.ok
 
 
 def test_build_remediation_prompt_includes_workspace_and_report(tmp_path):

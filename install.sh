@@ -6,6 +6,12 @@
 # Usage:
 #   ./install.sh            # install the gitguard CLI
 #   ./install.sh --dev      # also install dev/test extras (pytest)
+#   ./install.sh --with-fix-agent
+#                           # install GitGuard plus scan --fix dependencies
+#   ./install.sh --without-fix-agent
+#                           # skip optional scan --fix dependency setup
+#   ./install.sh --no-fix-agent-auth
+#                           # install fix-agent packages but skip Claude login
 #   VENV=.venv ./install.sh # override the venv location (default: .venv)
 #
 set -euo pipefail
@@ -16,11 +22,16 @@ cd "$SCRIPT_DIR"
 
 VENV="${VENV:-.venv}"
 EXTRAS="."
+INSTALL_FIX_AGENT="prompt"
+FIX_AGENT_AUTH="1"
 for arg in "$@"; do
     case "$arg" in
         --dev) EXTRAS=".[dev]" ;;
+        --with-fix-agent) INSTALL_FIX_AGENT="yes" ;;
+        --without-fix-agent|--no-fix-agent) INSTALL_FIX_AGENT="no" ;;
+        --no-fix-agent-auth) FIX_AGENT_AUTH="0" ;;
         -h|--help)
-            grep '^#' "$0" | sed 's/^# \{0,1\}//; 1d'
+            awk 'NR == 1 { next } /^#/ { sub(/^# ?/, ""); print; next } { exit }' "$0"
             exit 0
             ;;
         *) echo "Unknown option: $arg" >&2; exit 2 ;;
@@ -100,7 +111,34 @@ echo "Upgrading pip…"
 echo "Installing GitGuard (${EXTRAS})…"
 "$VENV_PY" -m pip install --quiet -e "$EXTRAS"
 
+should_install_fix_agent() {
+    case "$INSTALL_FIX_AGENT" in
+        yes) return 0 ;;
+        no) return 1 ;;
+    esac
+    if [ -t 0 ] && [ -t 1 ]; then
+        printf "Install scan --fix support now? This installs the fix-agent runtime and checks Claude login. [Y/n] "
+        read -r answer
+        case "${answer:-Y}" in
+            y|Y|yes|YES) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+    return 1
+}
+
+if should_install_fix_agent; then
+    echo
+    echo "Setting up scan --fix support…"
+    setup_args=(setup-fix-agent)
+    if [ "$FIX_AGENT_AUTH" = "0" ]; then
+        setup_args+=(--no-auth)
+    fi
+    "$VENV_PY" -m gitguard.cli "${setup_args[@]}"
+fi
+
 echo
 echo "✓ GitGuard installed."
 echo "  Activate the environment:  source ${VENV}/bin/activate"
 echo "  Then run:                  gitguard --help"
+echo "  Setup scan --fix later:    gitguard setup-fix-agent"

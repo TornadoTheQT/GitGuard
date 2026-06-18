@@ -28,6 +28,8 @@ from .utils import GitGuardError, is_github_url, parse_github_url
 
 MIN_NODE_VERSION = (22, 19)
 OPENCLAW_VERSION_TIMEOUT = 15
+FIX_AGENT_NPM_PACKAGES = ("openclaw@latest", "@anthropic-ai/claude-code@latest")
+DEFAULT_FIX_AGENT_MODEL = "claude-cli/claude-sonnet-4-6"
 
 _COPY_IGNORE = shutil.ignore_patterns(
     ".git", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv", "venv"
@@ -60,14 +62,18 @@ class FixAgentStatus:
 
     node: ToolStatus
     agent: ToolStatus
+    claude: Optional[ToolStatus] = None
 
     @property
     def ready(self) -> bool:
-        return self.node.ok and self.agent.ok
+        claude_ok = True if self.claude is None else self.claude.ok
+        return self.node.ok and self.agent.ok and claude_ok
 
     def problem_summary(self) -> str:
         problems = [
-            status.detail for status in (self.node, self.agent) if not status.ok
+            status.detail
+            for status in (self.node, self.agent, self.claude)
+            if status is not None and not status.ok
         ]
         return "; ".join(problems) or "Fix agent is ready"
 
@@ -150,7 +156,7 @@ def _run_version(command: list[str], timeout: int) -> subprocess.CompletedProces
     )
 
 
-def check_fix_agent_environment() -> FixAgentStatus:
+def check_fix_agent_environment(*, check_claude: bool = True) -> FixAgentStatus:
     """Check whether Node and the external fix-agent CLI are usable."""
 
     node_path = shutil.which("node")
@@ -208,7 +214,72 @@ def check_fix_agent_environment() -> FixAgentStatus:
                 path=agent_path,
             )
 
-    return FixAgentStatus(node=node, agent=agent)
+    claude = check_claude_environment() if check_claude else None
+    return FixAgentStatus(node=node, agent=agent, claude=claude)
+
+
+def check_claude_environment() -> ToolStatus:
+    """Check whether the Claude CLI exists and is authenticated."""
+
+    claude_path = shutil.which("claude")
+    if not claude_path:
+        return ToolStatus(
+            "claude",
+            False,
+            "Claude CLI was not found on PATH",
+        )
+
+    try:
+        version_proc = _run_version(
+            [claude_path, "--version"], OPENCLAW_VERSION_TIMEOUT
+        )
+        version = (version_proc.stdout or version_proc.stderr).strip()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ToolStatus(
+            "claude",
+            False,
+            f"Could not run claude --version: {exc}",
+            path=claude_path,
+        )
+
+    try:
+        auth_proc = _run_version(
+            [claude_path, "auth", "status", "--json"], OPENCLAW_VERSION_TIMEOUT
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return ToolStatus(
+            "claude",
+            False,
+            f"Could not check Claude auth status: {exc}",
+            path=claude_path,
+            version=version,
+        )
+
+    raw = (auth_proc.stdout or auth_proc.stderr).strip()
+    logged_in = False
+    auth_method = None
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                logged_in = bool(data.get("loggedIn"))
+                auth_method = data.get("authMethod") or data.get("apiProvider")
+        except json.JSONDecodeError:
+            logged_in = auth_proc.returncode == 0 and "logged" in raw.lower()
+
+    if auth_proc.returncode == 0 and logged_in:
+        detail = f"Claude CLI {version or 'installed'} authenticated"
+        if auth_method:
+            detail += f" via {auth_method}"
+        return ToolStatus("claude", True, detail, path=claude_path, version=version)
+
+    return ToolStatus(
+        "claude",
+        False,
+        "Claude CLI is installed but not logged in",
+        path=claude_path,
+        version=version,
+    )
 
 
 def _agent_version_detail(raw: str) -> str:
@@ -218,10 +289,10 @@ def _agent_version_detail(raw: str) -> str:
     return "Fix agent runtime responded"
 
 
-def require_fix_agent_available() -> FixAgentStatus:
+def require_fix_agent_available(model: Optional[str] = None) -> FixAgentStatus:
     """Raise a user-facing error if agentic remediation cannot run."""
 
-    status = check_fix_agent_environment()
+    status = check_fix_agent_environment(check_claude=_uses_claude_model(model))
     if status.ready:
         return status
     raise GitGuardError(
@@ -229,11 +300,31 @@ def require_fix_agent_available() -> FixAgentStatus:
         reason=status.problem_summary(),
         fixes=[
             "Install Node.js v22.19.0 or newer",
-            "Install and configure the external fix-agent runtime",
-            "Complete fix-agent model authentication if needed",
+            "Run `gitguard setup-fix-agent` to install and configure the fix-agent stack",
+            "Complete `claude auth login` if the setup command asks you to sign in",
             "Re-run `gitguard doctor` to confirm the setup",
         ],
     )
+
+
+def _uses_claude_model(model: Optional[str]) -> bool:
+    return model is None or model.startswith("claude-cli/")
+
+
+def npm_global_bin_path() -> Optional[Path]:
+    """Return npm's global bin directory using npm config, if available."""
+
+    npm = shutil.which("npm")
+    if not npm:
+        return None
+    try:
+        proc = _run_version([npm, "config", "get", "prefix"], OPENCLAW_VERSION_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    prefix = (proc.stdout or proc.stderr).strip()
+    if proc.returncode != 0 or not prefix:
+        return None
+    return Path(prefix).expanduser() / "bin"
 
 
 def prepare_remediation_target(target: str) -> PreparedTarget:
